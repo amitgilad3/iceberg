@@ -64,24 +64,32 @@ import org.apache.pig.impl.util.UDFContext;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+/**
+ * @deprecated will be removed in 1.8.0
+ */
+@Deprecated
 public class IcebergStorage extends LoadFunc
     implements LoadMetadata, LoadPredicatePushdown, LoadPushDown {
   private static final Logger LOG = LoggerFactory.getLogger(IcebergStorage.class);
 
   public static final String PIG_ICEBERG_TABLES_IMPL = "pig.iceberg.tables.impl";
   private static Tables iceberg;
-  private static Map<String, Table> tables = Maps.newConcurrentMap();
-  private static Map<String, String> locations = Maps.newConcurrentMap();
+  private static final Map<String, Table> TABLES = Maps.newConcurrentMap();
+  private static final Map<String, String> LOCATIONS = Maps.newConcurrentMap();
 
   private String signature;
 
   private IcebergRecordReader reader;
 
+  public IcebergStorage() {
+    LOG.warn("Iceberg Pig is deprecated and will be removed in Iceberg 1.8.0");
+  }
+
   @Override
   public void setLocation(String location, Job job) {
     LOG.info("[{}]: setLocation() -> {}", signature, location);
 
-    locations.put(signature, location);
+    LOCATIONS.put(signature, location);
 
     Configuration conf = job.getConfiguration();
 
@@ -93,9 +101,9 @@ public class IcebergStorage extends LoadFunc
   @Override
   public InputFormat getInputFormat() {
     LOG.info("[{}]: getInputFormat()", signature);
-    String location = locations.get(signature);
+    String location = LOCATIONS.get(signature);
 
-    return new IcebergPigInputFormat(tables.get(location), signature);
+    return new IcebergPigInputFormat(TABLES.get(location), signature);
   }
 
   @Override
@@ -323,13 +331,13 @@ public class IcebergStorage extends LoadFunc
       iceberg = (Tables) ReflectionUtils.newInstance(tablesImpl, job.getConfiguration());
     }
 
-    Table result = tables.get(location);
+    Table result = TABLES.get(location);
 
     if (result == null) {
       try {
         LOG.info("[{}]: Loading table for location: {}", signature, location);
         result = iceberg.load(location);
-        tables.put(location, result);
+        TABLES.put(location, result);
       } catch (Exception e) {
         throw new FrontendException("Failed to instantiate tables implementation", e);
       }

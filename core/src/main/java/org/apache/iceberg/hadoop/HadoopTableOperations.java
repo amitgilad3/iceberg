@@ -22,7 +22,6 @@ import java.io.BufferedReader;
 import java.io.IOException;
 import java.io.InputStreamReader;
 import java.nio.charset.StandardCharsets;
-import java.util.Set;
 import java.util.UUID;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -31,6 +30,7 @@ import org.apache.hadoop.fs.FSDataOutputStream;
 import org.apache.hadoop.fs.FileStatus;
 import org.apache.hadoop.fs.FileSystem;
 import org.apache.hadoop.fs.Path;
+import org.apache.iceberg.CatalogUtil;
 import org.apache.iceberg.LocationProviders;
 import org.apache.iceberg.LockManager;
 import org.apache.iceberg.TableMetadata;
@@ -45,10 +45,7 @@ import org.apache.iceberg.io.FileIO;
 import org.apache.iceberg.io.LocationProvider;
 import org.apache.iceberg.relocated.com.google.common.annotations.VisibleForTesting;
 import org.apache.iceberg.relocated.com.google.common.base.Preconditions;
-import org.apache.iceberg.relocated.com.google.common.collect.Sets;
 import org.apache.iceberg.util.Pair;
-import org.apache.iceberg.util.Tasks;
-import org.apache.iceberg.util.ThreadPools;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -60,6 +57,8 @@ import org.slf4j.LoggerFactory;
 public class HadoopTableOperations implements TableOperations {
   private static final Logger LOG = LoggerFactory.getLogger(HadoopTableOperations.class);
   private static final Pattern VERSION_PATTERN = Pattern.compile("v([^\\.]*)\\..*");
+  private static final TableMetadataParser.Codec[] TABLE_METADATA_PARSER_CODEC_VALUES =
+      TableMetadataParser.Codec.values();
 
   private final Configuration conf;
   private final Path location;
@@ -151,7 +150,7 @@ public class HadoopTableOperations implements TableOperations {
             TableProperties.METADATA_COMPRESSION, TableProperties.METADATA_COMPRESSION_DEFAULT);
     TableMetadataParser.Codec codec = TableMetadataParser.Codec.fromName(codecName);
     String fileExtension = TableMetadataParser.getFileExtension(codec);
-    Path tempMetadataFile = metadataPath(UUID.randomUUID().toString() + fileExtension);
+    Path tempMetadataFile = metadataPath(UUID.randomUUID() + fileExtension);
     TableMetadataParser.write(metadata, io().newOutputFile(tempMetadataFile.toString()));
 
     int nextVersion = (current.first() != null ? current.first() : 0) + 1;
@@ -166,7 +165,7 @@ public class HadoopTableOperations implements TableOperations {
     // update the best-effort version pointer
     writeVersionHint(nextVersion);
 
-    deleteRemovedMetadataFiles(base, metadata);
+    CatalogUtil.deleteRemovedMetadataFiles(io(), base, metadata);
 
     this.shouldRefresh = true;
   }
@@ -235,7 +234,7 @@ public class HadoopTableOperations implements TableOperations {
 
   @VisibleForTesting
   Path getMetadataFile(int metadataVersion) throws IOException {
-    for (TableMetadataParser.Codec codec : TableMetadataParser.Codec.values()) {
+    for (TableMetadataParser.Codec codec : TABLE_METADATA_PARSER_CODEC_VALUES) {
       Path metadataFile = metadataFilePath(metadataVersion, codec);
       FileSystem fs = getFileSystem(metadataFile, conf);
       if (fs.exists(metadataFile)) {
@@ -294,7 +293,7 @@ public class HadoopTableOperations implements TableOperations {
     FileSystem fs = getFileSystem(versionHintFile, conf);
 
     try {
-      Path tempVersionHintFile = metadataPath(UUID.randomUUID().toString() + "-version-hint.temp");
+      Path tempVersionHintFile = metadataPath(UUID.randomUUID() + "-version-hint.temp");
       writeVersionToPath(fs, tempVersionHintFile, versionToWrite);
       fs.delete(versionHintFile, false /* recursive delete */);
       fs.rename(tempVersionHintFile, versionHintFile);
@@ -410,39 +409,6 @@ public class HadoopTableOperations implements TableOperations {
 
   protected FileSystem getFileSystem(Path path, Configuration hadoopConf) {
     return Util.getFs(path, hadoopConf);
-  }
-
-  /**
-   * Deletes the oldest metadata files if {@link
-   * TableProperties#METADATA_DELETE_AFTER_COMMIT_ENABLED} is true.
-   *
-   * @param base table metadata on which previous versions were based
-   * @param metadata new table metadata with updated previous versions
-   */
-  private void deleteRemovedMetadataFiles(TableMetadata base, TableMetadata metadata) {
-    if (base == null) {
-      return;
-    }
-
-    boolean deleteAfterCommit =
-        metadata.propertyAsBoolean(
-            TableProperties.METADATA_DELETE_AFTER_COMMIT_ENABLED,
-            TableProperties.METADATA_DELETE_AFTER_COMMIT_ENABLED_DEFAULT);
-
-    if (deleteAfterCommit) {
-      Set<TableMetadata.MetadataLogEntry> removedPreviousMetadataFiles =
-          Sets.newHashSet(base.previousFiles());
-      removedPreviousMetadataFiles.removeAll(metadata.previousFiles());
-      Tasks.foreach(removedPreviousMetadataFiles)
-          .executeWith(ThreadPools.getWorkerPool())
-          .noRetry()
-          .suppressFailureWhenFinished()
-          .onFailure(
-              (previousMetadataFile, exc) ->
-                  LOG.warn(
-                      "Delete failed for previous metadata file: {}", previousMetadataFile, exc))
-          .run(previousMetadataFile -> io().deleteFile(previousMetadataFile.file()));
-    }
   }
 
   private static TableMetadata checkUUID(TableMetadata currentMetadata, TableMetadata newMetadata) {

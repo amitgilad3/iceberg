@@ -28,6 +28,7 @@ import static org.assertj.core.api.Assumptions.assumeThat;
 import java.io.File;
 import java.io.IOException;
 import java.net.URI;
+import java.nio.file.NoSuchFileException;
 import java.util.Arrays;
 import java.util.Collection;
 import java.util.Iterator;
@@ -35,6 +36,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Random;
 import org.apache.avro.generic.GenericData.Record;
+import org.apache.commons.io.FileUtils;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.iceberg.Files;
 import org.apache.iceberg.Parameter;
@@ -56,7 +58,7 @@ import org.apache.iceberg.spark.SparkSchemaUtil;
 import org.apache.iceberg.spark.SparkWriteOptions;
 import org.apache.iceberg.spark.data.ParameterizedAvroDataTest;
 import org.apache.iceberg.spark.data.RandomData;
-import org.apache.iceberg.spark.data.SparkAvroReader;
+import org.apache.iceberg.spark.data.SparkPlannedAvroReader;
 import org.apache.iceberg.types.Types;
 import org.apache.spark.SparkException;
 import org.apache.spark.TaskContext;
@@ -91,7 +93,7 @@ public class TestDataFrameWrites extends ParameterizedAvroDataTest {
 
   private Map<String, String> tableProperties;
 
-  private org.apache.spark.sql.types.StructType sparkSchema =
+  private final org.apache.spark.sql.types.StructType sparkSchema =
       new org.apache.spark.sql.types.StructType(
           new org.apache.spark.sql.types.StructField[] {
             new org.apache.spark.sql.types.StructField(
@@ -106,16 +108,16 @@ public class TestDataFrameWrites extends ParameterizedAvroDataTest {
                 org.apache.spark.sql.types.Metadata.empty())
           });
 
-  private Schema icebergSchema =
+  private final Schema icebergSchema =
       new Schema(
           Types.NestedField.optional(1, "optionalField", Types.StringType.get()),
           Types.NestedField.required(2, "requiredField", Types.StringType.get()));
 
-  private List<String> data0 =
+  private final List<String> data0 =
       Arrays.asList(
           "{\"optionalField\": \"a1\", \"requiredField\": \"bid_001\"}",
           "{\"optionalField\": \"a2\", \"requiredField\": \"bid_002\"}");
-  private List<String> data1 =
+  private final List<String> data1 =
       Arrays.asList(
           "{\"optionalField\": \"d1\", \"requiredField\": \"bid_101\"}",
           "{\"optionalField\": \"d2\", \"requiredField\": \"bid_102\"}",
@@ -220,16 +222,15 @@ public class TestDataFrameWrites extends ParameterizedAvroDataTest {
     final int numPartitions = 10;
     final int partitionToFail = new Random().nextInt(numPartitions);
     MapPartitionsFunction<Row, Row> failOnFirstPartitionFunc =
-        (MapPartitionsFunction<Row, Row>)
-            input -> {
-              int partitionId = TaskContext.getPartitionId();
+        input -> {
+          int partitionId = TaskContext.getPartitionId();
 
-              if (partitionId == partitionToFail) {
-                throw new SparkException(
-                    String.format("Intended exception in partition %d !", partitionId));
-              }
-              return input;
-            };
+          if (partitionId == partitionToFail) {
+            throw new SparkException(
+                String.format("Intended exception in partition %d !", partitionId));
+          }
+          return input;
+        };
 
     Dataset<Row> df =
         createDataset(records, schema)
@@ -260,7 +261,7 @@ public class TestDataFrameWrites extends ParameterizedAvroDataTest {
     List<InternalRow> rows = Lists.newArrayList();
     try (AvroIterable<InternalRow> reader =
         Avro.read(Files.localInput(testFile))
-            .createReaderFunc(SparkAvroReader::new)
+            .createResolvingReader(SparkPlannedAvroReader::create)
             .project(schema)
             .build()) {
 
@@ -287,8 +288,8 @@ public class TestDataFrameWrites extends ParameterizedAvroDataTest {
         .startsWith("2");
 
     File location = temp.resolve("parquet").resolve("test").toFile();
-    String sourcePath = String.format("%s/nullable_poc/sourceFolder/", location.toString());
-    String targetPath = String.format("%s/nullable_poc/targetFolder/", location.toString());
+    String sourcePath = String.format("%s/nullable_poc/sourceFolder/", location);
+    String targetPath = String.format("%s/nullable_poc/targetFolder/", location);
 
     tableProperties = ImmutableMap.of(TableProperties.WRITE_DATA_LOCATION, targetPath);
 
@@ -341,8 +342,8 @@ public class TestDataFrameWrites extends ParameterizedAvroDataTest {
         .startsWith("2");
 
     File location = temp.resolve("parquet").resolve("test").toFile();
-    String sourcePath = String.format("%s/nullable_poc/sourceFolder/", location.toString());
-    String targetPath = String.format("%s/nullable_poc/targetFolder/", location.toString());
+    String sourcePath = String.format("%s/nullable_poc/sourceFolder/", location);
+    String targetPath = String.format("%s/nullable_poc/targetFolder/", location);
 
     tableProperties = ImmutableMap.of(TableProperties.WRITE_DATA_LOCATION, targetPath);
 
@@ -420,5 +421,13 @@ public class TestDataFrameWrites extends ParameterizedAvroDataTest {
 
     assertThat(snapshotBeforeFailingWrite).isEqualTo(snapshotAfterFailingWrite);
     assertThat(resultBeforeFailingWrite).isEqualTo(resultAfterFailingWrite);
+
+    while (location.exists()) {
+      try {
+        FileUtils.deleteDirectory(location);
+      } catch (NoSuchFileException e) {
+        // ignore NoSuchFileException when a file is already deleted
+      }
+    }
   }
 }

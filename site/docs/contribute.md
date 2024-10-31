@@ -45,10 +45,58 @@ The Iceberg community prefers to receive contributions as [Github pull requests]
 * If a PR is related to an issue, adding `Closes #1234` in the PR description will automatically close the issue and helps keep the project clean
 * If a PR is posted for visibility and isn't necessarily ready for review or merging, be sure to convert the PR to a draft
 
+### Merging Pull Requests
+
+Most pull requests can be merged once a single [committer](https://www.apache.org/foundation/how-it-works/#committers) other than the author is satisfied with the code in the PR (exceptions that require additional input from the community are detailed below). [Committers are trusted](https://infra.apache.org/new-committers-guide.html#the-committers-way) to act in the best [interest of the project](https://community.apache.org/projectIndependence.html#apache-projects-are-managed-independently).
+
+Before merging all review comments should be addressed either by making changes or agreeing the request is out of scope for the PR. For additions to public APIs committers should wait at least 24 hours before merging to ensure there is no additional feedback from members of the community. 
+
+Requesting changes on a PR indicates a reviewer believes the PR has merit but still needs issues addressed before merging. If a reviewer believes the change should not be merged at all and there is nothing the author could do to address the reviewers concerns, the reviewer should explicitly state this on the PR. In the rare event that a PR author and reviewers cannot come to a consensus on a PR, the disagreement should be raised to the developer mailing list for further discussion. In this context, a reviewer is anyone leaving comments on the PR including contributors, committers and PMC members.
+
+There are several exceptions to a single committer being able to merge a PR:
+
+* Behavioral and functional changes to a specification must go through the [Iceberg improvement proposal](#apache-iceberg-improvement-proposals) before any code can be merged.
+* Changes to files under the `format` directory and `open-api/rest-catalog*` are considered specification changes. Unless already covered under an Iceberg improvement proposal, specification changes require their own vote (e.g. bug fixes or specification clarifications). The vote follows the ASF [code modification](https://www.apache.org/foundation/voting.html#votes-on-code-modification) model and no lazy consensus modifier. Grammar, spelling and minor formatting fixes are exempted from this rule. Draft specifications (new independent specifications that are going through the Iceberg improvement process) do not require a vote but authors should provide notice on the developer mailing list about substantive changes (the final draft will be subject to a vote).
+
+## Apache Iceberg Improvement Proposals
+
+### What is an improvement proposal?
+
+An improvement proposal is a major change to Apache Iceberg that may require changes to an existing specification, creation
+of a new specification, or significant additions/changes to any of the existing Iceberg implementations.  Changes that are large in
+scope need to be considered carefully and incorporate feedback from many community stakeholders.
+
+### What should a proposal include?
+
+1. A GitHub issue created using the `Apache Iceberg Improvement Proposal` template
+2. A document including the following:
+    * Motivation for the change 
+    * Implementation proposal 
+    * Breaking changes/incompatibilities 
+    * Alternatives considered
+3. A discussion thread initiated in the dev list with the Subject: '[DISCUSS] <proposal title\>'
+
+### Who can submit a proposal?
+
+Anyone can submit a proposal, but be considerate and submit only if you plan on contributing to the implementation.
+
+### Where can I find current proposals?
+
+Current proposals are tracked in GitHub issues with the label [Proposal][iceberg-proposals]
+
+### How are proposals adopted?
+
+Once general consensus has been reached, a vote should be raised on the dev list.  The vote follows the ASF 
+[code modification][apache-vote] model with three positive PMC votes required and no lazy consensus modifier.
+The voting process should be held in good faith to reinforce and affirm the agreed upon proposal, not to 
+settle disagreements or to force a decision.
+
+[iceberg-proposals]: https://github.com/apache/iceberg/issues?q=is%3Aissue+is%3Aopen+label%3Aproposal+
+[apache-vote]: https://www.apache.org/foundation/voting.html#apache-voting-process
 
 ## Building the Project Locally
 
-Iceberg is built using Gradle with Java 8 or Java 11.
+Iceberg is built using Gradle with Java 11, 17, or 21.
 
 * To invoke a build and run tests: `./gradlew build`
 * To skip tests: `./gradlew build -x test -x integrationTest`
@@ -160,6 +208,8 @@ public interface ManageSnapshots extends PendingUpdate<Snapshot> {
   // existing code...
 
   // adding this method introduces an API-breaking change
+  // since existing classes implementing ManageSnapshots
+  // will no longer compile.
   ManageSnapshots createBranch(String name);
 }
 ```
@@ -171,8 +221,8 @@ public class SnapshotManager implements ManageSnapshots {
   // existing code...
 
   @Override
-  public ManageSnapshots createBranch(String name, long snapshotId) {
-    updateSnapshotReferencesOperation().createBranch(name, snapshotId);
+  public ManageSnapshots createBranch(String name) {
+    updateSnapshotReferencesOperation().createBranch(name);
     return this;
   }
 }
@@ -336,6 +386,34 @@ When passing boolean arguments to existing or external methods, use inline comme
   // GOOD: these uses of dropTable are clear to the reader
   dropTable(identifier, true /* purge data */);
   dropTable(identifier, purge);
+```
+
+#### Accessing instance variables
+
+Use `this` when assigning values to instance variables, making it clear when the object's state is being changed. Omit `this` when reading instance variables to keep lines shorter. 
+
+```java
+  private String value;
+
+  // BAD: unnecessary `this` during reads
+  public String value() {
+    return this.value;
+  }
+
+  // GOOD: no `this` when reading instance variables
+  public String value() {
+     return value;
+  }
+
+  // BAD: missing `this` in assignments
+  public void value(String newValue) {
+     value = newValue;
+  }
+
+  // GOOD: use `this` in assignments
+  public void value(String newValue) {
+     this.value = newValue;
+  }
 ```
 
 #### Config naming

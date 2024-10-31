@@ -20,6 +20,7 @@ package org.apache.iceberg.spark.extensions;
 
 import static org.apache.iceberg.expressions.Expressions.bucket;
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import org.apache.iceberg.NullOrder;
 import org.apache.iceberg.ParameterizedTestExtension;
@@ -28,7 +29,6 @@ import org.apache.iceberg.Table;
 import org.apache.iceberg.TableProperties;
 import org.apache.iceberg.exceptions.ValidationException;
 import org.apache.spark.sql.internal.SQLConf;
-import org.assertj.core.api.Assertions;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.TestTemplate;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -73,7 +73,7 @@ public class TestSetWriteDistributionAndOrdering extends ExtensionsTestBase {
     Table table = validationCatalog.loadTable(tableIdent);
     assertThat(table.sortOrder().isUnsorted()).as("Table should start unsorted").isTrue();
     sql("SET %s=true", SQLConf.CASE_SENSITIVE().key());
-    Assertions.assertThatThrownBy(
+    assertThatThrownBy(
             () -> {
               sql("ALTER TABLE %s WRITE ORDERED BY category, id", tableName);
             })
@@ -200,8 +200,7 @@ public class TestSetWriteDistributionAndOrdering extends ExtensionsTestBase {
 
     table.refresh();
 
-    String distributionMode = table.properties().get(TableProperties.WRITE_DISTRIBUTION_MODE);
-    assertThat(distributionMode).as("Distribution mode must match").isEqualTo("none");
+    assertThat(table.properties().containsKey(TableProperties.WRITE_DISTRIBUTION_MODE)).isFalse();
 
     SortOrder expected =
         SortOrder.builderFor(table.schema())
@@ -210,6 +209,25 @@ public class TestSetWriteDistributionAndOrdering extends ExtensionsTestBase {
             .asc(bucket("id", 16))
             .asc("id")
             .build();
+    assertThat(table.sortOrder()).as("Sort order must match").isEqualTo(expected);
+  }
+
+  @TestTemplate
+  public void testSetWriteLocallyOrderedToPartitionedTable() {
+    sql(
+        "CREATE TABLE %s (id bigint NOT NULL, category string) USING iceberg PARTITIONED BY (id)",
+        tableName);
+    Table table = validationCatalog.loadTable(tableIdent);
+    assertThat(table.sortOrder().isUnsorted()).as("Table should start unsorted").isTrue();
+
+    sql("ALTER TABLE %s WRITE LOCALLY ORDERED BY category DESC", tableName);
+
+    table.refresh();
+
+    assertThat(table.properties().containsKey(TableProperties.WRITE_DISTRIBUTION_MODE)).isFalse();
+
+    SortOrder expected =
+        SortOrder.builderFor(table.schema()).withOrderId(1).desc("category").build();
     assertThat(table.sortOrder()).as("Sort order must match").isEqualTo(expected);
   }
 
@@ -249,6 +267,13 @@ public class TestSetWriteDistributionAndOrdering extends ExtensionsTestBase {
 
     SortOrder expected = SortOrder.builderFor(table.schema()).withOrderId(1).asc("id").build();
     assertThat(table.sortOrder()).as("Sort order must match").isEqualTo(expected);
+
+    sql("ALTER TABLE %s WRITE LOCALLY ORDERED BY id", tableName);
+
+    table.refresh();
+
+    String newDistributionMode = table.properties().get(TableProperties.WRITE_DISTRIBUTION_MODE);
+    assertThat(newDistributionMode).as("Distribution mode must match").isEqualTo(distributionMode);
   }
 
   @TestTemplate
